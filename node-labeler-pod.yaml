@@ -2,10 +2,10 @@
 apiVersion: v1
 kind: Pod
 metadata:
-  name: shell-operator
+  name: node-labeler
 spec:
   containers:
-  - name: shell-operator
-    image: quay.io/mboersma/shell-operator:monitor-nodes
+  - name: node-labeler
+    image: quay.io/mboersma/node-labeler:latest
     imagePullPolicy: Always
   serviceAccountName: monitor-nodes-serviceaccount
