@@ -46,6 +46,6 @@ else
   if [[ $COUNTER -lt 3 ]]; then
     # apply all expected master or agent labels to the node
     results=$(kubectl label --overwrite node "$resourceName" $labelsToApply 2>&1)
-    echo "$(date --utc +%FT%TZ) WARN     : $results"
+    echo "$(date --utc +%FT%TZ) WARNING  : $results"
   fi
 fi
