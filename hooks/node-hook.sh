@@ -45,7 +45,7 @@ else
 
   if [[ $COUNTER -lt 3 ]]; then
     # apply all expected master or agent labels to the node
-    # TODO: log this prefixed by "2019-07-16T18:48:16Z INFO     : "
-    kubectl label --overwrite node "$resourceName" $labelsToApply
+    results=$(kubectl label --overwrite node "$resourceName" $labelsToApply 2>&1)
+    echo "$(date --utc +%FT%TZ) WARN     : $results"
   fi
 fi
