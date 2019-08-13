@@ -69,14 +69,60 @@ func (c *Controller) syncToStdout(key string) error {
 		// Note that you also have to check the uid if you have a local controlled resource, which
 		// is dependent on the actual instance, to detect that a Pod was recreated with the same name
 		node := obj.(*v1.Node)
-		fmt.Printf("Sync/Add/Update for Node %s\n", node.GetName())
+		name := node.GetName()
 		labels := node.GetLabels()
-		labels["foo"] = "bar"
-		node.SetLabels(labels)
-		if _, err := c.kubeclientset.CoreV1().Nodes().Update(node); err != nil {
-			klog.Error(err)
+
+		fmt.Printf("syncing Node %s\n", name)
+
+		masterLabels := map[string]string{
+			"kubernetes.azure.com/role":      "master",
+			"kubernetes.io/role":             "master",
+			"node-role.kubernetes.io/master": "",
 		}
 
+		agentLabels := map[string]string{
+			"kubernetes.azure.com/role":     "agent",
+			"kubernetes.io/role":            "agent",
+			"node-role.kubernetes.io/agent": "",
+		}
+
+		// TODO: check to see if the node has any--but not all--of the master labels
+		matched := 0
+		for key, value := range masterLabels {
+			for key1, value1 := range labels {
+				if key == key1 && value == value1 {
+					matched++
+				}
+			}
+		}
+
+		fmt.Printf("Node %s matched %d master labels\n", name, matched)
+		if matched > 0 && matched < len(masterLabels) {
+			node.SetLabels(masterLabels)
+			if _, err := c.kubeclientset.CoreV1().Nodes().Update(node); err != nil {
+				klog.Error(err)
+			}
+			return nil
+		}
+
+		matched = 0
+		for key, value := range agentLabels {
+			for key1, value1 := range labels {
+				if key == key1 && value == value1 {
+					matched++
+				}
+			}
+		}
+
+		fmt.Printf("Node %s matched %d agent labels\n", name, matched)
+		if matched > 0 && matched < len(agentLabels) {
+			node.SetLabels(masterLabels)
+			if _, err := c.kubeclientset.CoreV1().Nodes().Update(node); err != nil {
+				klog.Error(err)
+			}
+			fmt.Println("applied master labels")
+			return nil
+		}
 	}
 	return nil
 }
