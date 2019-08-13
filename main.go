@@ -4,7 +4,7 @@
 package main
 
 import (
-	"fmt"
+	"errors"
 	"time"
 
 	"k8s.io/klog"
@@ -63,21 +63,23 @@ func (c *Controller) syncToStdout(key string) error {
 		return err
 	}
 
-	if !exists {
-		fmt.Printf("Node %s does not exist anymore\n", key)
-	} else {
-		// Note that you also have to check the uid if you have a local controlled resource, which
-		// is dependent on the actual instance, to detect that a Pod was recreated with the same name
+	if exists {
 		node := obj.(*v1.Node)
-		name := node.GetName()
-		labels := node.GetLabels()
 
-		fmt.Printf("syncing Node %s\n", name)
+		klog.Infof("syncing Node %s\n", node.GetName())
 
 		masterLabels := map[string]string{
 			"kubernetes.azure.com/role":      "master",
 			"kubernetes.io/role":             "master",
 			"node-role.kubernetes.io/master": "",
+		}
+
+		if needsLabeling(node, masterLabels) {
+			node.SetLabels(masterLabels)
+			if _, err := c.kubeclientset.CoreV1().Nodes().Update(node); err != nil {
+				klog.Error(err)
+			}
+			return nil
 		}
 
 		agentLabels := map[string]string{
@@ -86,45 +88,30 @@ func (c *Controller) syncToStdout(key string) error {
 			"node-role.kubernetes.io/agent": "",
 		}
 
-		// TODO: check to see if the node has any--but not all--of the master labels
-		matched := 0
-		for key, value := range masterLabels {
-			for key1, value1 := range labels {
-				if key == key1 && value == value1 {
-					matched++
-				}
-			}
-		}
-
-		fmt.Printf("Node %s matched %d master labels\n", name, matched)
-		if matched > 0 && matched < len(masterLabels) {
-			node.SetLabels(masterLabels)
+		if needsLabeling(node, agentLabels) {
+			node.SetLabels(agentLabels)
 			if _, err := c.kubeclientset.CoreV1().Nodes().Update(node); err != nil {
 				klog.Error(err)
 			}
-			return nil
-		}
-
-		matched = 0
-		for key, value := range agentLabels {
-			for key1, value1 := range labels {
-				if key == key1 && value == value1 {
-					matched++
-				}
-			}
-		}
-
-		fmt.Printf("Node %s matched %d agent labels\n", name, matched)
-		if matched > 0 && matched < len(agentLabels) {
-			node.SetLabels(masterLabels)
-			if _, err := c.kubeclientset.CoreV1().Nodes().Update(node); err != nil {
-				klog.Error(err)
-			}
-			fmt.Println("applied master labels")
 			return nil
 		}
 	}
+
 	return nil
+}
+
+func needsLabeling(node *v1.Node, labels map[string]string) bool {
+	// check to see if the node has any--but not all--of the specified labels
+	matched := 0
+	for key, value := range labels {
+		for key1, value1 := range node.GetLabels() {
+			if key == key1 && value == value1 {
+				matched++
+			}
+		}
+	}
+
+	return (matched > 0 && matched < len(labels))
 }
 
 // handleErr checks if an error happened and makes sure we will retry later.
@@ -163,7 +150,7 @@ func (c *Controller) Run(threadiness int, stopCh chan struct{}) {
 
 	// Wait for all involved caches to be synced, before processing items from the queue is started
 	if !cache.WaitForCacheSync(stopCh, c.informer.HasSynced) {
-		runtime.HandleError(fmt.Errorf("Timed out waiting for caches to sync"))
+		runtime.HandleError(errors.New("timeout waiting for cache sync"))
 		return
 	}
 
@@ -208,25 +195,9 @@ func main() {
 				queue.Add(key)
 			}
 		},
-		// DeleteFunc: func(obj interface{}) {
-		// 	if key, err := cache.DeletionHandlingMetaNamespaceKeyFunc(obj); err == nil {
-		// 		queue.Add(key)
-		// 	}
-		// },
 	}, cache.Indexers{})
 
 	controller := NewController(clientset, queue, indexer, informer)
-
-	// // We can now warm up the cache for initial synchronization.
-	// // Let's suppose that we knew about a pod "mypod" on our last run, therefore add it to the cache.
-	// // If this pod is not there anymore, the controller will be notified about the removal after the
-	// // cache has synchronized.
-	// indexer.Add(&v1.Node{
-	// 	ObjectMeta: meta_v1.ObjectMeta{
-	// 		Name:      "mynode",
-	// 		Namespace: v1.NamespaceDefault,
-	// 	},
-	// })
 
 	stop := make(chan struct{})
 	defer close(stop)

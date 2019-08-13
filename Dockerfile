@@ -1,4 +1,3 @@
-# FROM scratch
-FROM alpine
+FROM scratch
 ADD node-labeler /
 CMD ["/node-labeler"]
