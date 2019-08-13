@@ -20,16 +20,18 @@ import (
 )
 
 type Controller struct {
-	indexer  cache.Indexer
-	queue    workqueue.RateLimitingInterface
-	informer cache.Controller
+	kubeclientset kubernetes.Interface
+	indexer       cache.Indexer
+	queue         workqueue.RateLimitingInterface
+	informer      cache.Controller
 }
 
-func NewController(queue workqueue.RateLimitingInterface, indexer cache.Indexer, informer cache.Controller) *Controller {
+func NewController(kubeclientset kubernetes.Interface, queue workqueue.RateLimitingInterface, indexer cache.Indexer, informer cache.Controller) *Controller {
 	return &Controller{
-		informer: informer,
-		indexer:  indexer,
-		queue:    queue,
+		kubeclientset: kubeclientset,
+		informer:      informer,
+		indexer:       indexer,
+		queue:         queue,
 	}
 }
 
@@ -57,17 +59,24 @@ func (c *Controller) processNextItem() bool {
 func (c *Controller) syncToStdout(key string) error {
 	obj, exists, err := c.indexer.GetByKey(key)
 	if err != nil {
-		klog.Errorf("Fetching object with key %s from store failed with %v", key, err)
+		klog.Errorf("getting object by key %s: %v", key, err)
 		return err
 	}
 
 	if !exists {
-		// Below we will warm up our cache with a Pod, so that we will see a delete for one pod
 		fmt.Printf("Node %s does not exist anymore\n", key)
 	} else {
 		// Note that you also have to check the uid if you have a local controlled resource, which
 		// is dependent on the actual instance, to detect that a Pod was recreated with the same name
-		fmt.Printf("Sync/Add/Update for Node %s\n", obj.(*v1.Node).GetName())
+		node := obj.(*v1.Node)
+		fmt.Printf("Sync/Add/Update for Node %s\n", node.GetName())
+		labels := node.GetLabels()
+		labels["foo"] = "bar"
+		node.SetLabels(labels)
+		if _, err := c.kubeclientset.CoreV1().Nodes().Update(node); err != nil {
+			klog.Error(err)
+		}
+
 	}
 	return nil
 }
@@ -100,9 +109,8 @@ func (c *Controller) handleErr(err error, key interface{}) {
 
 func (c *Controller) Run(threadiness int, stopCh chan struct{}) {
 	defer runtime.HandleCrash()
-
-	// Let the workers stop when we are done
 	defer c.queue.ShutDown()
+
 	klog.Info("Starting Node controller")
 
 	go c.informer.Run(stopCh)
@@ -154,14 +162,14 @@ func main() {
 				queue.Add(key)
 			}
 		},
-		DeleteFunc: func(obj interface{}) {
-			if key, err := cache.DeletionHandlingMetaNamespaceKeyFunc(obj); err == nil {
-				queue.Add(key)
-			}
-		},
+		// DeleteFunc: func(obj interface{}) {
+		// 	if key, err := cache.DeletionHandlingMetaNamespaceKeyFunc(obj); err == nil {
+		// 		queue.Add(key)
+		// 	}
+		// },
 	}, cache.Indexers{})
 
-	controller := NewController(queue, indexer, informer)
+	controller := NewController(clientset, queue, indexer, informer)
 
 	// // We can now warm up the cache for initial synchronization.
 	// // Let's suppose that we knew about a pod "mypod" on our last run, therefore add it to the cache.
