@@ -8,8 +8,6 @@ import (
 	"flag"
 	"time"
 
-	"k8s.io/klog"
-
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/util/runtime"
@@ -18,6 +16,7 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/workqueue"
+	"k8s.io/klog"
 )
 
 type Controller struct {
@@ -76,7 +75,12 @@ func (c *Controller) syncToStdout(key string) error {
 		}
 
 		if needsLabeling(node, masterLabels) {
-			node.SetLabels(masterLabels)
+			labels := node.GetLabels()
+			for k, v := range masterLabels {
+				labels[k] = v
+			}
+			node.SetLabels(labels)
+			// TODO: replace this with PATCH
 			if _, err := c.kubeclientset.CoreV1().Nodes().Update(node); err != nil {
 				klog.Error(err)
 			}
@@ -90,7 +94,13 @@ func (c *Controller) syncToStdout(key string) error {
 		}
 
 		if needsLabeling(node, agentLabels) {
-			node.SetLabels(agentLabels)
+			labels := node.GetLabels()
+			for k, v := range agentLabels {
+				labels[k] = v
+			}
+			node.SetLabels(labels)
+			// TODO: replace this with PATCH
+			// TODO: strategic merge patch to update labels
 			if _, err := c.kubeclientset.CoreV1().Nodes().Update(node); err != nil {
 				klog.Error(err)
 			}
