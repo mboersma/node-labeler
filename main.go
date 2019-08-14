@@ -5,6 +5,7 @@ package main
 
 import (
 	"errors"
+	"flag"
 	"time"
 
 	"k8s.io/klog"
@@ -168,6 +169,11 @@ func (c *Controller) runWorker() {
 }
 
 func main() {
+	klogFlags := flag.NewFlagSet("klog", flag.ExitOnError)
+	klog.InitFlags(klogFlags)
+	logtostderr := klogFlags.Lookup("logtostderr")
+	logtostderr.Value.Set("true")
+
 	// use the in-cluster Kubernetes config
 	config, err := rest.InClusterConfig()
 	if err != nil {
