@@ -4,12 +4,15 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"flag"
 	"time"
 
+	jsonpatch "github.com/evanphx/json-patch"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/fields"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
@@ -53,6 +56,8 @@ func (c *Controller) processNextItem() bool {
 	return true
 }
 
+type NodeLabels map[string]string
+
 // syncToStdout is the business logic of the controller. In this controller it simply prints
 // information about the pod to stdout. In case an error happened, it has to simply return the error.
 // The retry logic should not be part of the business logic.
@@ -65,57 +70,61 @@ func (c *Controller) syncToStdout(key string) error {
 
 	if exists {
 		node := obj.(*v1.Node)
+		name := node.GetName()
 
-		klog.Infof("syncing Node %s\n", node.GetName())
+		klog.Infof("syncing Node %s\n", name)
 
-		masterLabels := map[string]string{
-			"kubernetes.azure.com/role":      "master",
-			"kubernetes.io/role":             "master",
-			"node-role.kubernetes.io/master": "",
+		nodeLabelsList := []NodeLabels{
+			{
+				"kubernetes.azure.com/role":      "master",
+				"kubernetes.io/role":             "master",
+				"node-role.kubernetes.io/master": "",
+			},
+			{
+				"kubernetes.azure.com/role":     "agent",
+				"kubernetes.io/role":            "agent",
+				"node-role.kubernetes.io/agent": "",
+			},
 		}
 
-		if needsLabeling(node, masterLabels) {
+		for _, nodeLabels := range nodeLabelsList {
 			labels := node.GetLabels()
-			for k, v := range masterLabels {
-				labels[k] = v
+			if needsLabeling(labels, nodeLabels) {
+				oldData, err := json.Marshal(node)
+				if err != nil {
+					klog.Error(err)
+					break
+				}
+				for k, v := range nodeLabels {
+					labels[k] = v
+				}
+				node.SetLabels(labels)
+				newData, err := json.Marshal(node)
+				if err != nil {
+					klog.Error(err)
+					break
+				}
+				patchBytes, err := jsonpatch.CreateMergePatch(oldData, newData)
+				if err != nil {
+					klog.Error(err)
+					break
+				}
+				if _, err := c.kubeclientset.CoreV1().Nodes().Patch(name, types.MergePatchType, patchBytes); err != nil {
+					klog.Error(err)
+				}
+				break
 			}
-			node.SetLabels(labels)
-			// TODO: replace this with PATCH
-			if _, err := c.kubeclientset.CoreV1().Nodes().Update(node); err != nil {
-				klog.Error(err)
-			}
-			return nil
-		}
-
-		agentLabels := map[string]string{
-			"kubernetes.azure.com/role":     "agent",
-			"kubernetes.io/role":            "agent",
-			"node-role.kubernetes.io/agent": "",
-		}
-
-		if needsLabeling(node, agentLabels) {
-			labels := node.GetLabels()
-			for k, v := range agentLabels {
-				labels[k] = v
-			}
-			node.SetLabels(labels)
-			// TODO: replace this with PATCH
-			// TODO: strategic merge patch to update labels
-			if _, err := c.kubeclientset.CoreV1().Nodes().Update(node); err != nil {
-				klog.Error(err)
-			}
-			return nil
 		}
 	}
 
 	return nil
 }
 
-func needsLabeling(node *v1.Node, labels map[string]string) bool {
+func needsLabeling(labels, nodeLabels map[string]string) bool {
 	// check to see if the node has any--but not all--of the specified labels
 	matched := 0
-	for key, value := range labels {
-		for key1, value1 := range node.GetLabels() {
+	for key, value := range nodeLabels {
+		for key1, value1 := range labels {
 			if key == key1 && value == value1 {
 				matched++
 			}
@@ -179,6 +188,7 @@ func (c *Controller) runWorker() {
 }
 
 func main() {
+	// set klog to send to stderr
 	klogFlags := flag.NewFlagSet("klog", flag.ExitOnError)
 	klog.InitFlags(klogFlags)
 	logtostderr := klogFlags.Lookup("logtostderr")
