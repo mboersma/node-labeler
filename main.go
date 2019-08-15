@@ -72,8 +72,6 @@ func (c *Controller) syncToStdout(key string) error {
 		node := obj.(*v1.Node)
 		name := node.GetName()
 
-		klog.Infof("syncing Node %s\n", name)
-
 		nodeLabelsList := []NodeLabels{
 			{
 				"kubernetes.azure.com/role":      "master",
@@ -109,6 +107,7 @@ func (c *Controller) syncToStdout(key string) error {
 					klog.Error(err)
 					break
 				}
+				klog.Warningf("updating labels on Node %s:\n\t%s\n", name, string(patchBytes))
 				if _, err := c.kubeclientset.CoreV1().Nodes().Patch(name, types.MergePatchType, patchBytes); err != nil {
 					klog.Error(err)
 				}
@@ -131,7 +130,7 @@ func needsLabeling(labels, nodeLabels map[string]string) bool {
 		}
 	}
 
-	return (matched > 0 && matched < len(labels))
+	return (matched > 0 && matched < len(nodeLabels))
 }
 
 // handleErr checks if an error happened and makes sure we will retry later.
@@ -146,7 +145,7 @@ func (c *Controller) handleErr(err error, key interface{}) {
 
 	// This controller retries 5 times if something goes wrong. After that, it stops trying.
 	if c.queue.NumRequeues(key) < 5 {
-		klog.Infof("Error syncing node %v: %v", key, err)
+		klog.Infof("error syncing node %v: %v", key, err)
 
 		// Re-enqueue the key rate limited. Based on the rate limiter on the
 		// queue and the re-enqueue history, the key will be processed later again.
@@ -157,14 +156,14 @@ func (c *Controller) handleErr(err error, key interface{}) {
 	c.queue.Forget(key)
 	// Report to an external entity that, even after several retries, we could not successfully process this key
 	runtime.HandleError(err)
-	klog.Infof("Dropping node %q out of the queue: %v", key, err)
+	klog.Infof("dropping node %q from the queue: %v", key, err)
 }
 
 func (c *Controller) Run(threadiness int, stopCh chan struct{}) {
 	defer runtime.HandleCrash()
 	defer c.queue.ShutDown()
 
-	klog.Info("Starting Node controller")
+	klog.Info("starting Node controller")
 
 	go c.informer.Run(stopCh)
 
@@ -205,6 +204,7 @@ func main() {
 		klog.Fatal(err)
 	}
 
+	// TODO: can we listen only for events where labels actually changed?
 	nodeWatcher := cache.NewListWatchFromClient(
 		clientset.CoreV1().RESTClient(), "nodes", v1.NamespaceAll, fields.Everything())
 
